@@ -1,0 +1,25 @@
+Package: SpecCurve
+Title: Constructing, Running, and Visualizing Specification Curves
+Version: 0.0.0.9000
+Authors@R: 
+    person(given = "Joseph",
+           family = "O'Brien",
+           role = c("aut", "cre"),
+           email = "joseph.obrien@utexas.edu",
+           comment = c(ORCID = "0000-0001-9851-5077"))
+Description: This package provides tools to construct and test "specification curves"--
+    a way of considering the robustness of a particular model parameter estimate
+    (e.g., a treatment effect) by constructing and running models that comprise all 
+    combinations of potentially reasonable modeling choices. Given a set of potential choices, 
+    this package can construct such combinations, run all models, summarize results, and facilitate
+    basic plotting of results (using package ggplot2).  Currently includes options for varied
+    outcomes, treatment, inclusion/exclusion of covariates, data subsetting, and variable weighting.
+License: GPL v2
+Encoding: UTF-8
+LazyData: true
+Depends: ggplot2
+Imports: dplyr,
+         magrittr,
+         sandwich,
+         lmtest
+RoxygenNote: 6.1.1
