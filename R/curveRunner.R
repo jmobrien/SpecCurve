@@ -175,6 +175,11 @@ curveRunner <-
                  params$family <- s.curve.model$mod.family
                }
 
+               ## Generalized multilevel model:
+               if(s.curve.model$mod.type %in% c("glmer", "glmmTMS")){
+                 params$family <- s.curve.model$mod.family
+               }
+
                ## Set up function to match one specified:
                FUN <- match.fun(s.curve.model$mod.type)
 
@@ -256,32 +261,71 @@ curveRunner <-
 
                ## Record the number of cases used in each model
                ## (in case something was dropped due to missingness):
-               if(s.curve.model$mod.type == "glm"){
-                 ## GLM version:
-                 results.row["n"] <- results.row$df.null + 1
+               results.row["n"] <- nobs(model.run)
+
+               if(s.curve.model$mod.type %in% c("lmer", "glmer", "glmmTMS")){
+                 #get a random effects only model:
+                 model.tidy.randef <-
+                   model.tidy[model.tidy$effect == "ran_pars",]
+
+                 model.tidy.fixef <-
+                   model.tidy[model.tidy$effect == "fixed",]
+
+                 ## Add variables indicating estimates for each variable:
+                 results.row[paste0(model.tidy.fixef$term, ".est")] <-
+                   as.list(model.tidy.fixef$estimate)
+
+                 ## Variables indicating SE's for each included variable:
+                 results.row[paste0(model.tidy.fixef$term, ".se")] <-
+                   as.list(model.tidy.fixef$std.error)
+
+                 ## Variables indicating p.vals for each included variable:
+                 results.row[paste0(model.tidy.fixef$term, ".pval")] <-
+                   as.list(model.tidy.fixef$p.value)
+
+                 ## Variables for random effects terms:
+                 results.raw[paste0(model.tidy.randef$group, "_", model.tidy.randef$term, ".est")] <-
+                   as.list(model.tidy.randef$est)
+
+                 ## Create a record of included variables:
+                 model.tidy.include <-
+                   ## Drops any variables that are not estimated (e.g.,
+                   ## rank-deficient), and intercept term:
+                   model.tidy[!is.na(model.tidy$estimate),][-1,]
+
+                 final.variables <-
+                   ifelse(
+                     # If it's a fixed effect:
+                     is.na(model.tidy.include$group),
+                     # Just add the fixed effect term:
+                     model.tidy.include$term,
+                     # But if random construct that and add it:
+                     paste0(model.tidy.include$group, "_", model.tidy.include$term)
+                   )
+
+
                } else {
-                 ## LM version:
-                 results.row["n"] <- results.row$df + results.row$df.residual
-               }
 
-               ## Add variables indicating estimates for each variable:
-               results.row[paste0(model.tidy$term, ".est")] <-
-                 as.list(model.tidy$estimate)
+                 ## Version for LM and GLM models:
 
-               ## Variables indicating SE's for each included variable:
-               results.row[paste0(model.tidy$term, ".se")] <-
-                 as.list(model.tidy$std.error)
+                 ## Add variables indicating estimates for each variable:
+                 results.row[paste0(model.tidy$term, ".est")] <-
+                   as.list(model.tidy$estimate)
 
-               ## Variables indicating p.vals for each included variable:
-               results.row[paste0(model.tidy$term, ".pval")] <-
-                 as.list(model.tidy$p.value)
+                 ## Variables indicating SE's for each included variable:
+                 results.row[paste0(model.tidy$term, ".se")] <-
+                   as.list(model.tidy$std.error)
 
+                 ## Variables indicating p.vals for each included variable:
+                 results.row[paste0(model.tidy$term, ".pval")] <-
+                   as.list(model.tidy$p.value)
 
                ## Create a record of included variables:
                final.variables <-
                  ## Drops any variables that are not estimated (e.g.,
                  ## rank-deficient):
-                 c(model.tidy$term[!is.na(model.tidy$estimate)][-1])
+                 model.tidy$term[!is.na(model.tidy$estimate)][-1]
+               }
 
                ## Update the final model report:
                final.model <- c(final.model, final.variables)
