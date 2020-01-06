@@ -176,7 +176,7 @@ curveRunner <-
                }
 
                ## Generalized multilevel model:
-               if(s.curve.model$mod.type %in% c("glmer", "glmmTMS")){
+               if(s.curve.model$mod.type %in% c("glmer", "glmmTMB")){
                  params$family <- s.curve.model$mod.family
                }
 
@@ -263,7 +263,7 @@ curveRunner <-
                ## (in case something was dropped due to missingness):
                results.row["n"] <- nobs(model.run)
 
-               if(s.curve.model$mod.type %in% c("lmer", "glmer", "glmmTMS")){
+               if(s.curve.model$mod.type %in% c("lmer", "glmer", "glmmTMB")){
                  #get a random effects only model:
                  model.tidy.randef <-
                    model.tidy[model.tidy$effect == "ran_pars",]
