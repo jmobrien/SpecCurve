@@ -285,7 +285,7 @@ curveRunner <-
 
                  ## Variables for random effects terms:
                  results.row[paste0(model.tidy.randef$group, "_", model.tidy.randef$term, ".est")] <-
-                   as.list(model.tidy.randef$est)
+                   as.list(model.tidy.randef$estimate)
 
                  ## Create a record of included variables:
                  model.tidy.include <-
