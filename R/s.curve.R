@@ -9,11 +9,12 @@
 #'   "gender.selfreport")
 #' @param no.cov.exclude Will add a model where each item of the list above is
 #'   missing, unless specified here
+#' @param ranef.list Random effects to cross, if model uses them (always included in such models)
 #' @param extra.models Models written literally; will be appended to the set
 #'   (still crossed against subsets and weights)
 #' @param extra.treatment Treatment variable in extra models (length 1 or same
 #'   as other, needed if doing inverse probability weighting
-#' @param mod.type takes lm, glm
+#' @param mod.type bare function or string of functions--takes lm, glm, lmer, glmer, glmmTMB
 #' @param mod.family if family needed
 #' @param alpha nominal alpha value (if one tailed, will test against p <= .1
 #'   on that side)
@@ -50,6 +51,7 @@
 #' @examples
 s.curve <- function(dat, outcomes, treatment,
                     cov.list, no.cov.exclude = NULL,
+                    ranef.list = NULL,
                     extra.models = NULL,
                     extra.treatment = NULL,
                     mod.type = lm, mod.family = NULL,
@@ -67,8 +69,49 @@ s.curve <- function(dat, outcomes, treatment,
                     model.only = FALSE) {
 
   ## Type of model:
-  model.type <- deparse(substitute(mod.type))
+  if(class(mod.type) == "function"){
+    model.type <- deparse(substitute(mod.type))
+  }  else {
+    # If it's already a string, then copy it over:
+    model.type <- mod.type
+  }
 
+  # Load packages, if necessary:
+  if("lmer" %in% model.type) stopifnot(require(lmerTest))
+  if("glmer" %in% model.type) stopifnot(require(lme4))
+  if("glmmTMB" %in% model.type) stopifnot(require(glmmTMB))
+
+  # Check whether single-level models are present:
+  if(any(c("lm", "glm") %in% model.type)){
+
+    # Set variable indicating that there are single-level models:
+    has.ols.mods <- TRUE
+
+  }
+
+  # Check whether random effects are present:
+  if(any(c("lmer", "glmer", "glmmTMB") %in% model.type)){
+
+    if(is.null(ranef.list)){
+      stop("multi-level models require random effects terms to be specified")
+    }
+
+    # Set variable indicating that there are models needing random effects:
+    has.mlm.mods <- TRUE
+
+  }
+
+  # Check whether generalized models are present (needs "family" argument(s))
+  if(any(c("glm", "glmer", "glmmTMB") %in% model.type)){
+
+    if(is.null(mod.family)){
+      stop('generalized models require "mod.family" argument with one or more elements')
+    }
+
+    # Set variable indicating that there are models needing random effects:
+    has.gen.mods <- TRUE
+
+  }
 
   ## INITIALIZATION ----
   s.curve.mod <-
@@ -96,7 +139,7 @@ s.curve <- function(dat, outcomes, treatment,
   ## Create a vector of all included variables,
   ## outcomes, treatment variables, and covariates:
   vars.list <-
-    unique(c(outcomes, treatment, unlist(cov.list)))
+    unique(c(outcomes, treatment, unlist(cov.list), unlist(ranef.list)))
 
   ## .(2a & 2b) cross treatment, outcomes, & covariates ----
 
@@ -117,6 +160,7 @@ s.curve <- function(dat, outcomes, treatment,
       simplify = FALSE
     )
 
+
   ## Add in condition variables for right-hand side
   var.list.rhs <-
     c(list(treatment = treatment), cov.list.na)
@@ -125,17 +169,44 @@ s.curve <- function(dat, outcomes, treatment,
   var.list.all <-
     c(list(outcomes = outcomes), var.list.rhs)
 
+  if(has.ols.mods){
 
-  ## Expand to a data frame where each case
-  ## elements to go in a formula on right-hand side
-  mod.grid <-
-    expand.grid(var.list.rhs,
-                stringsAsFactors = FALSE)
+    ## Expand to a data frame where each case
+    ## elements to go in a formula on right-hand side
+    mod.grid <-
+      expand.grid(var.list.rhs,
+                  stringsAsFactors = FALSE)
 
-  ## elements to go in all of them:
-  mod.grid.all <-
-    expand.grid(var.list.all,
-                stringsAsFactors = FALSE)
+    ## elements to go in all of them:
+    mod.grid.all <-
+      expand.grid(var.list.all,
+                  stringsAsFactors = FALSE)
+
+
+  if(has.mlm.mods){
+
+    ## Add in condition variables for right-hand side
+    var.list.rhs.mlm <-
+      c(var.list.rhs, ranef.list)
+
+    ## Add in outcome variables
+    var.list.all.mlm <-
+      c(list(outcomes = outcomes), var.list.rhs.mlm)
+
+    ## Expand to a data frame where each case
+    ## elements to go in a formula on right-hand side
+    mod.grid.mlm <-
+      expand.grid(var.list.rhs.mlm,
+                  stringsAsFactors = FALSE)
+
+    ## elements to go in all of them:
+    mod.grid.all.mlm <-
+      expand.grid(var.list.all.mlm,
+                  stringsAsFactors = FALSE)
+
+  }
+
+
 
   ## .(2c) construct formulas ----
 
