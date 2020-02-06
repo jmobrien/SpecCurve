@@ -1,5 +1,5 @@
 # SpecCurve
-R rackage for constructing specification curves
+R package for constructing specification curves
 
 
 This R package is intended to benefit research, data analysis, and open/reproducible science through helping analysts construct, run, and summarize "specificaion curves" (Simonsohn, Simmons, and Nelson, 2015) to examine the size, robustness, and sensitivity of analyzed treatment effects.   The tools in this package are designed to streamline the work to meet the three goals outlined in the original paper: 
@@ -18,4 +18,4 @@ With the tools in this package, one can specify sets of choices from which to bu
 
 Given that, and an appropriate dataset, the main function s.curve() will construct a set of all the unique model specifications available from the choices above, running those, and summarizing the results.  Further tools allow for visualizations of the results to assisting goal ii, as well as testing the results of the specification set against a larger set of specification curves employing permutations of the treatment variable within the data to simulate an exact test.
 
-This package is a work in progress, so I welcome any contributions from interested parties.
+This package is a work in progress, so I welcome any pull requests from interested parties or inquiries about collaboration.
