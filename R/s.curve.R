@@ -81,13 +81,14 @@ s.curve <- function(dat, outcomes, treatment,
   if("glmer" %in% model.type) stopifnot(require(lme4))
   if("glmmTMB" %in% model.type) stopifnot(require(glmmTMB))
 
-  # Check whether single-level models are present:
-  if(any(c("lm", "glm") %in% model.type)){
 
-    # Set variable indicating that there are single-level models:
-    has.ols.mods <- TRUE
+  # Set variable indicating whether there are single-level models:
+  has.ols.mods <-
+  ifelse(any(c("lm", "glm") %in% model.type),
+         TRUE,
+         FALSE
+  )
 
-  }
 
   # Check whether random effects are present:
   if(any(c("lmer", "glmer", "glmmTMB") %in% model.type)){
@@ -99,7 +100,12 @@ s.curve <- function(dat, outcomes, treatment,
     # Set variable indicating that there are models needing random effects:
     has.mlm.mods <- TRUE
 
+  } else {
+    # Set to indicate absence:
+    has.mlm.mods <- FALSE
+
   }
+
 
   # Check whether generalized models are present (needs "family" argument(s))
   if(any(c("glm", "glmer", "glmmTMB") %in% model.type)){
@@ -112,6 +118,11 @@ s.curve <- function(dat, outcomes, treatment,
     has.gen.mods <- TRUE
 
   }
+
+  # If tail is null, set to "2tail"
+  if(is.null(tail)) {
+    tail <- "2tail"
+    }
 
   ## INITIALIZATION ----
   s.curve.mod <-
@@ -169,18 +180,49 @@ s.curve <- function(dat, outcomes, treatment,
   var.list.all <-
     c(list(outcomes = outcomes), var.list.rhs)
 
+
+  ## initialize formula vectors
+  formulas.ols <- c()
+  formulas.mlm <- c()
+
   if(has.ols.mods){
 
     ## Expand to a data frame where each case
     ## elements to go in a formula on right-hand side
-    mod.grid <-
+    mod.grid.ols <-
       expand.grid(var.list.rhs,
                   stringsAsFactors = FALSE)
 
     ## elements to go in all of them:
-    mod.grid.all <-
+    mod.grid.all.ols <-
       expand.grid(var.list.all,
                   stringsAsFactors = FALSE)
+
+    ## Make right-hand side formula
+    formulas.rhs.ols <-
+      apply(mod.grid.ols, 1, function(x){
+        ## dropping NA's (when category excluded):
+        formula.rhs <- paste(na.omit(x), collapse= " + ")
+        ## adding "1" to empty formula (to avoid errors):
+        formula.rhs[formula.rhs == ""] <- 1
+        formula.rhs
+      })
+
+    ## Probably don't want empty models, so throw warning:
+    if( any(formulas.rhs.ols == "1") ) {
+      warning(
+        "NOTE: set includes one or more null models."
+      )}
+
+
+    ## Adds left-hand side (outcomes), make full formulas:
+    formulas.ols <-
+      lapply(
+        as.vector(outer(outcomes, formulas.rhs.ols,
+                        paste, sep=" ~ ")),
+        as.formula)
+
+  }
 
 
   if(has.mlm.mods){
@@ -204,42 +246,67 @@ s.curve <- function(dat, outcomes, treatment,
       expand.grid(var.list.all.mlm,
                   stringsAsFactors = FALSE)
 
+
+
+    ## .(2c) construct formulas ----
+
+    ## Make right-hand side formula
+    formulas.rhs.mlm <-
+      apply(mod.grid.mlm, 1, function(x){
+        ## dropping NA's (when category excluded):
+        formula.rhs <- paste(na.omit(x), collapse= " + ")
+        ## adding "1" to empty formula (to avoid errors):
+        formula.rhs[formula.rhs == ""] <- 1
+        formula.rhs
+      })
+
+    ## Probably don't want empty models, so throw warning:
+    if( any(formulas.rhs.mlm == "1") ) {
+      warning(
+        "NOTE: set includes one or more null models."
+      )}
+
+
+    ## Adds left-hand side (outcomes), make full formulas:
+    formulas.mlm <-
+      lapply(
+        as.vector(outer(outcomes, formulas.rhs.mlm,
+                        paste, sep=" ~ ")),
+        as.formula)
+
   }
 
+  # Data frame of formulas:
+  s.curve.mod$formulas.df <-
+    data.frame(
+        type = c(
+          rep("single-level", length(formulas.ols)),
+          rep("multi-level", length(formulas.mlm))
+          ),
+        # I() for taking formula list as-is:
+        formulas = I(c(formulas.ols, formulas.mlm))
+          )
 
-
-  ## .(2c) construct formulas ----
-
-  ## Make right-hand side formula
-  formulas.rhs <-
-    apply(mod.grid, 1, function(x){
-      ## dropping NA's (when category excluded):
-      formula.rhs <- paste(na.omit(x), collapse= " + ")
-      ## adding "1" to empty formula (to avoid errors):
-      formula.rhs[formula.rhs == ""] <- 1
-      formula.rhs
-    })
-
-  ## Probably don't want empty models, so throw warning:
-  if( any(formulas.rhs == "1") ) {
-    warning(
-      "NOTE: set includes one or more null models."
-    )}
-
-
-  ## Adds left-hand side (outcomes), make full formulas:
   s.curve.mod$formulas <-
-    lapply(
-      as.vector(outer(outcomes, formulas.rhs,
-                      paste, sep=" ~ ")),
-      as.formula)
+    s.curve.mod$formulas.df$formulas
+
+  # ## Construct models specifications that incorporate single/multilevel and family:
+  # spec.list <-
+  #
+  # if("lm" %in% model.family){
+  #     expand.grid(
+  #       mod.type = "lm",
+  #       formula = formulas.ols,
+  #       family = NA
+  #     )
+  # }
 
 
   ## .(2d) extra models ----
 
   ## Have a vector of treatment variables for use later:
-  treatment.vars <-
-    mod.grid.all$treatment
+  # treatment.vars <-
+  #   mod.grid.all$treatment
 
   ## Add in any extra models, if applicable:
   if(!is.null(extra.models)){
@@ -249,25 +316,27 @@ s.curve <- function(dat, outcomes, treatment,
         lapply(extra.models, as.formula)
         )
 
-    if (is.null(extra.treatment)){
-      if (length(treatment) == 1){
-        ## fill it in with the presumed treatment variable
-        ## (to be updates later for more robust checking):
-        treatment.vars <-
-          c(treatment.vars, rep(treatment, length(extra.models)))
-
-      } else {
-        stop("need to specify treatment variables for extra models if more than 1")
-      }
-    } else {
-      treatment.vars <- c(treatment.vars, extra.treament)
-    }
-  }
-
 
   ## Converts formula names to character vector for easier review later:
   s.curve.mod$formula.names <-
     sapply(s.curve.mod$formulas, deparse, width.cutoff = 500)
+
+    # if (is.null(extra.treatment)){
+    #   if (length(treatment) == 1){
+    #     ## fill it in with the presumed treatment variable
+    #     ## (to be updates later for more robust checking):
+    #     treatment.vars <-
+    #       c(treatment.vars, rep(treatment, length(extra.models)))
+    #
+    #   } else {
+    #     stop("need to specify treatment variables for extra models if more than 1")
+    #   }
+    # } else {
+    #   treatment.vars <- c(treatment.vars, extra.treament)
+    # }
+  }
+
+
 
   ## Length of formula list (# initial specifications):
   s.curve.mod$n.formulas <-
@@ -458,27 +527,105 @@ s.curve <- function(dat, outcomes, treatment,
   ## CREATE SPECIFICATION INDEX LIST ----
 
   ## total number of specifications after variables and weightings:
-  s.curve.mod$n.specifications <- length(full.names)
+  # s.curve.mod$n.specifications <- length(full.names)
 
 
-  ## Create a final specification list:
+  # Initialize specification list:
+  s.curve.mod$spec.list <- data.frame()
+
+  # Binding function for specification list:
+  specbind <- function(model.type, multilevel, generalized, formulas, family){
+    rbind(s.curve.mod$spec.list,
+          expand.grid(
+            model.type = model.type,
+            family = family,
+            weights = names(weightings),
+            subset = names(subsettings),
+            multilevel = multilevel,
+            generalized = generalized,
+            formula = formulas,
+            stringsAsFactors = FALSE
+          )
+    )
+    }
+
+
+  if("lm" %in% model.type){
+
+  ## Add linear models to the specification list:
   s.curve.mod$spec.list <-
-    setNames(
-      expand.grid(
-        s.curve.mod$formulas,
-        names(weightings),
-        names(subsettings),
-        stringsAsFactors = FALSE
-      ),
-      c("formula", "weights", "subset")
+    specbind(model.type = "lm",
+             multilevel = FALSE,
+             generalized = FALSE,
+             formulas = formulas.ols,
+             family = NA
     )
 
+  }
+
+  if("glm" %in% model.type){
+
+    ## Add linear models to the specification list:
+    s.curve.mod$spec.list <-
+      specbind(model.type = "glm",
+               multilevel = FALSE,
+               generalized = FALSE,
+               formulas = formulas.ols,
+               family = mod.family
+      )
+
+  }
+
+  if("lmer" %in% model.type){
+
+    ## Add linear models to the specification list:
+    s.curve.mod$spec.list <-
+      specbind(model.type = "lmer",
+               multilevel = TRUE,
+               generalized = FALSE,
+               formulas = formulas.mlm,
+               family = NA
+      )
+
+  }
+
+  if("glmer" %in% model.type){
+
+    ## Add linear models to the specification list:
+    s.curve.mod$spec.list <-
+      specbind(model.type = "glmer",
+               multilevel = TRUE,
+               generalized = TRUE,
+               formulas = formulas.mlm,
+               family = mod.family
+      )
+
+  }
+
+  if("glmmTMB" %in% model.type){
+
+    ## Add linear models to the specification list:
+    s.curve.mod$spec.list <-
+      specbind(model.type = "glmmTMB",
+               multilevel = TRUE,
+               generalized = TRUE,
+               formulas = formulas.mlm,
+               family = mod.family
+      )
+
+  }
+
+
   ## Add in a treatment variable for the index (used for inverse probability weighting)
-  s.curve.mod$spec.list$treatment <- treatment.vars
+  s.curve.mod$spec.list$treatment <- treatment
+
+  ## Add in count of specifications:
+  s.curve.mod$n.specifiations <-
+    nrow(s.curve.mod$spec.list)
 
   ## Give each specification a numeric index:
   s.curve.mod$spec.list$specification.index <-
-    seq_len(nrow(s.curve.mod$spec.list))
+    seq_len(s.curve.mod$n.specifiations)
 
 
   ## Just output the s-curve overall specification, if requested:
@@ -555,6 +702,7 @@ s.curve <- function(dat, outcomes, treatment,
 
 
   ## (pemutation test-not used in Bryan, Yeager, O'Brien) ----
+  perm.dat <- NULL
 
   if(is.numeric(permutations)){
 
@@ -599,6 +747,7 @@ s.curve <- function(dat, outcomes, treatment,
   ## Calls s-curve update to provide final output:
   s.curve.update(
     s.curve.mod = s.curve.mod,
+    perm.dat = perm.dat
   )
 
 }

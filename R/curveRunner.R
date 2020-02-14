@@ -56,6 +56,14 @@ curveRunner <-
 
                ## .... initialization ----
 
+               # Model type for this specification:
+               spec.type <- spec.list$model.type[ind]
+               # Model family for this specification, if relevant:
+               spec.family <- spec.list$family[ind]
+
+               spec.multilevel <- spec.list$multilevel[ind]
+               spec.generalized <- spec.list$generalized[ind]
+
                ## Initialize output:
                results.row <-
                  data.frame(
@@ -64,10 +72,21 @@ curveRunner <-
                    specification.no = spec.list$specification.index[ind],
                    ## Quick record of the model type used (lm, glm,
                    ## family if relevant, robustness approach)
-                   model.type =
-                     paste0(s.curve.model$mod.type, "-",
-                            s.curve.model$mod.family, "-",
-                            s.curve.model$robust.se),
+                   model.desc =
+                     paste(spec.type,
+                           # Write family if relevant, else ignore:
+                           if(is.na(spec.family)){
+                             NULL
+                           } else {
+                             spec.family
+                           },
+                           # Write robustness if relevant, else ignore:
+                           s.curve.model$robust.se,
+                           sep = "-"),
+                   model.type = spec.type,
+                   model.family = spec.family,
+                   multilevel = spec.multilevel,
+                   generalized = spec.generalized,
                    stringsAsFactors = FALSE
                  )
 
@@ -87,7 +106,7 @@ curveRunner <-
                ## Initialize final model report
                ## This contains the elements of each specific run
                ## (for duplicate checking):
-               final.model <- c()
+               final.model <- results.row$model.desc
 
                ## Get the weight and subset names for this run:
                weights.name <- spec.list[ind, "weights"]
@@ -170,25 +189,38 @@ curveRunner <-
                  final.model <- c(final.model, weights.name)
                }
 
-               ## Generalized linear model:
-               if(s.curve.model$mod.type == "glm"){
-                 params$family <- s.curve.model$mod.family
-               }
-
-               ## Generalized multilevel model:
-               if(s.curve.model$mod.type %in% c("glmer", "glmmTMB")){
-                 params$family <- s.curve.model$mod.family
+               ## Generalized model:
+               if(spec.generalized){
+                 params$family <- spec.family
                }
 
                ## Set up function to match one specified:
-               FUN <- match.fun(s.curve.model$mod.type)
+               FUN <- match.fun(spec.type)
 
 
                ## ....model runs ----
 
+               withWarnings <- function(expr) {
+                 myWarnings <- NULL
+                 wHandler <- function(w) {
+                   myWarnings <<- c(myWarnings, list(w))
+                   invokeRestart("muffleWarning")
+                 }
+                 val <- withCallingHandlers(expr, warning = wHandler)
+                 list(value = val, warnings = myWarnings)
+               }
+
+
+
                ## Run model:
-               model.run <-
-                 do.call(FUN, params)
+               model.run.warningcapture <-
+                 withWarnings(
+                   do.call(FUN, params)
+                 )
+
+
+               model.run <- model.run.warningcapture$value
+
 
                ## Extract model features:
                model.glance <-
@@ -246,7 +278,7 @@ curveRunner <-
 
                ## Assign a logical significance variable:
                results.row$significant <-
-                 if (is.null(s.curve.model$tail)){
+                 if (s.curve.model$tail == "2tail"){
                    results.row$p.value <= s.curve.model$alpha
                  } else if (s.curve.model$tail == "upper") {
                    results.row$p.value <= 2*s.curve.model$alpha &&
@@ -263,7 +295,7 @@ curveRunner <-
                ## (in case something was dropped due to missingness):
                results.row["n"] <- nobs(model.run)
 
-               if(s.curve.model$mod.type %in% c("lmer", "glmer", "glmmTMB")){
+               if(spec.type %in% c("lmer", "glmer", "glmmTMB")){
                  #get a random effects only model:
                  model.tidy.randef <-
                    model.tidy[model.tidy$effect == "ran_pars",]
@@ -350,6 +382,9 @@ curveRunner <-
                if(inc.full.models) {
                  results.row$full.models <- list(model.run)
                }
+
+               results.row$warnings <-
+                 model.run.warningcapture["warnings"]
 
                ## Output the results from this particular run:
                results.row
