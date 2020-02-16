@@ -639,11 +639,8 @@ s.curve <- function(dat, outcomes, treatment,
     curveRunner(s.curve.mod)
 
   s.curve.mod$results <-
-<<<<<<< HEAD
     do.call(results.list, what = bind_rows)
-=======
-  #   do.call(results.list, what = bind_rows)
->>>>>>> 9644cb32495c9fd5b2772dcc133bd8ff54e264a1
+
 
 
   ## (STEP 4) POST-RUN PROCESSING ------------------------------------------
