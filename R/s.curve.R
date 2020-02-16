@@ -635,8 +635,11 @@ s.curve <- function(dat, outcomes, treatment,
 
 
   ## (STEP 3) RUN MAIN SPECIFICATION CURVE --------------------------------
-  s.curve.mod$results <-
+  results.list <-
     curveRunner(s.curve.mod)
+
+  s.curve.mod$results <-
+  #   do.call(results.list, what = bind_rows)
 
 
   ## (STEP 4) POST-RUN PROCESSING ------------------------------------------
