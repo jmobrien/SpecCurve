@@ -352,11 +352,11 @@ curveRunner <-
                  results.row[paste0(model.tidy$term, ".pval")] <-
                    as.list(model.tidy$p.value)
 
-               ## Create a record of included variables:
-               final.variables <-
-                 ## Drops any variables that are not estimated (e.g.,
-                 ## rank-deficient):
-                 model.tidy$term[!is.na(model.tidy$estimate)][-1]
+                 ## Create a record of included variables:
+                 final.variables <-
+                   ## Drops any variables that are not estimated (e.g.,
+                   ## rank-deficient):
+                   model.tidy$term[!is.na(model.tidy$estimate)][-1]
                }
 
                ## Update the final model report:
@@ -386,12 +386,6 @@ curveRunner <-
                results.row$warnings <-
                  model.run.warningcapture["warnings"]
 
-               ## If permutation run,
-               ## mark which permutation this data is:
-               if(!is.null(perm.index)){
-                 results.row$permutation.index <- perm.index
-               }
-
                ## Output the results from this particular run:
                results.row
 
@@ -400,13 +394,18 @@ curveRunner <-
     # .(3c) compile into dataframe of results ----
     ## Bind it up together as a single data.frame
     ##(requires dplyr for bind_rows, as rbind is less flexible)
-    # results.df <-
-    #   do.call(results.list, what = bind_rows)
+    results.df <-
+      do.call(results.list, what = bind_rows)
 
 
+    ## If permutation run,
+    ## mark which permutation this data is:
+    if(!is.null(perm.index)){
+      results.df$permutation.index <- perm.index
+    }
 
     ## Output the full data frame of the fit model
-    results.list
+    results.df
 
   }
 
