@@ -28,10 +28,10 @@
 #' @param weights.exclude Includes an unweighted version where weights added
 #' @param weights.ipw.vars in addition to treatment variable, any other (factor
 #'   or categorical) variables to consider when (re)weighting subsets
-#' @param permutations optional, number of permutations for p-curve
-#' @param perm.pvalues logical, calculates permutation test-based pvalues (if
+#' @param iterations optional, number of iterations for s-curve resampling
+#' @param resample.pvals logical, calculates permutation test-based pvalues (if
 #'   permutation test active)
-#' @param perm.seed optional, RNG seed to use for permutation test (integer,
+#' @param rng.seed optional, RNG seed to use for permutation test (integer,
 #'   will create one if not present)
 #' @param cluster optional, Cluster robust standard errors
 #' @param cluster.var optional, Variable on which to cluster, string
@@ -55,12 +55,15 @@ s.curve <- function(dat, outcomes, treatment,
                     extra.models = NULL,
                     extra.treatment = NULL,
                     mod.type = lm, mod.family = NULL,
+                    offset = NULL,
                     alpha = .05, tail = NULL,
                     subsets = NULL, subsets.exclude = TRUE,
                     weights = NULL, weights.exclude = TRUE,
                     weights.ipw.vars = NULL,
-                    permutations = NULL,
-                    perm.pvalues = FALSE, perm.seed = NULL,
+                    resample.type = NULL,
+                    iterations = 1000,
+                    resample.pvals = FALSE, rng.seed = NULL,
+                    parallel = FALSE,
                     cluster = FALSE, cluster.var = NULL,
                     robust.se = NULL,
                     cat.percent = TRUE,
@@ -84,10 +87,10 @@ s.curve <- function(dat, outcomes, treatment,
 
   # Set variable indicating whether there are single-level models:
   has.ols.mods <-
-  ifelse(any(c("lm", "glm") %in% model.type),
-         TRUE,
-         FALSE
-  )
+    ifelse(any(c("lm", "glm") %in% model.type),
+           TRUE,
+           FALSE
+    )
 
 
   # Check whether random effects are present:
@@ -122,7 +125,7 @@ s.curve <- function(dat, outcomes, treatment,
   # If tail is null, set to "2tail"
   if(is.null(tail)) {
     tail <- "2tail"
-    }
+  }
 
   ## INITIALIZATION ----
   s.curve.mod <-
@@ -134,12 +137,14 @@ s.curve <- function(dat, outcomes, treatment,
       tail = tail,
       mod.type = model.type,
       mod.family = mod.family,
+      offset = offset,
       cluster = cluster,
       cluster.var = cluster.var,
       robust.se = robust.se,
-      permutations = permutations,
-      perm.pvalues = perm.pvalues,
-      perm.seed = perm.seed,
+      resample.type = resample.type,
+      iterations = iterations,
+      resample.pvals = resample.pvals,
+      rng.seed = rng.seed,
       weights.ipw.vars = weights.ipw.vars,
       keep.tidy.models = keep.tidy.models,
       keep.full.models = keep.full.models
@@ -279,13 +284,13 @@ s.curve <- function(dat, outcomes, treatment,
   # Data frame of formulas:
   s.curve.mod$formulas.df <-
     data.frame(
-        type = c(
-          rep("single-level", length(formulas.ols)),
-          rep("multi-level", length(formulas.mlm))
-          ),
-        # I() for taking formula list as-is:
-        formulas = I(c(formulas.ols, formulas.mlm))
-          )
+      type = c(
+        rep("single-level", length(formulas.ols)),
+        rep("multi-level", length(formulas.mlm))
+      ),
+      # I() for taking formula list as-is:
+      formulas = I(c(formulas.ols, formulas.mlm))
+    )
 
   s.curve.mod$formulas <-
     s.curve.mod$formulas.df$formulas
@@ -314,12 +319,12 @@ s.curve <- function(dat, outcomes, treatment,
     s.curve.mod$formulas <-
       c(s.curve.mod$formulas,
         lapply(extra.models, as.formula)
-        )
+      )
 
 
-  ## Converts formula names to character vector for easier review later:
-  s.curve.mod$formula.names <-
-    sapply(s.curve.mod$formulas, deparse, width.cutoff = 500)
+    ## Converts formula names to character vector for easier review later:
+    s.curve.mod$formula.names <-
+      sapply(s.curve.mod$formulas, deparse, width.cutoff = 500)
 
     # if (is.null(extra.treatment)){
     #   if (length(treatment) == 1){
@@ -490,7 +495,7 @@ s.curve <- function(dat, outcomes, treatment,
           weights.names
         )
     } ## End dynamic calculation approach (actual reweights handled in
-      ## curveRunner below)
+    ## curveRunner below)
 
 
     ## Add extra column if weights.exclude == TRUE
@@ -547,19 +552,19 @@ s.curve <- function(dat, outcomes, treatment,
             stringsAsFactors = FALSE
           )
     )
-    }
+  }
 
 
   if("lm" %in% model.type){
 
-  ## Add linear models to the specification list:
-  s.curve.mod$spec.list <-
-    specbind(model.type = "lm",
-             multilevel = FALSE,
-             generalized = FALSE,
-             formulas = formulas.ols,
-             family = NA
-    )
+    ## Add linear models to the specification list:
+    s.curve.mod$spec.list <-
+      specbind(model.type = "lm",
+               multilevel = FALSE,
+               generalized = FALSE,
+               formulas = formulas.ols,
+               family = NA
+      )
 
   }
 
@@ -635,125 +640,198 @@ s.curve <- function(dat, outcomes, treatment,
 
 
   ## (STEP 3) RUN MAIN SPECIFICATION CURVE --------------------------------
-  results.list <-
-    curveRunner(s.curve.mod)
-
   s.curve.mod$results <-
-    do.call(results.list, what = bind_rows)
-
+    curveRunner(s.curve.mod)
 
 
   ## (STEP 4) POST-RUN PROCESSING ------------------------------------------
 
   ## .(4a) duplicate handling -------
   ## Check for duplicated models, note positions:
-  duplicates <-
-    which(
-      duplicated(
-        lapply(s.curve.mod$results$final.specification,
-               ## Moves around terms so that duplicates aren't missed due to
-               ## R-style formatting:
-               function(x){
-                 str_split(x, ":") %>%
-                   lapply(sort) %>%
-                   vapply(function(x){paste0(x, collapse = ":")}, FUN.VALUE = "char") %>%
-                   sort
-               })
-      ))
-
-  ## Set a duplicate flag:
-  s.curve.mod$has.duplicates <- FALSE
-
-  ## Make note of duplicates, if existing, and update:
-  if(length(duplicates) > 0){
-
-    s.curve.mod$has.duplicates <- TRUE
-
-    ## Moves results of any duplicated models to separate location:
-    s.curve.mod$duplicated.models <-
-      s.curve.mod$results[duplicates,]
-
-    ## Moves duplicate specifications from specification list:
-    s.curve.mod$duplicate.specs <-
-      s.curve.mod$spec.list[duplicates,]
-
-    ## Drops duplicates from results:
-    s.curve.mod$results <-
-      s.curve.mod$results[-duplicates,]
-
-    ## Drops duplicates from specification list:
-    s.curve.mod$spec.list <-
-      s.curve.mod$spec.list[-duplicates,]
-
-    ## Records the total number of speficiations:
-    s.curve.mod$n.specifications.original <-
-      s.curve.mod$n.specifications
-
-    ## Updates the actual number of remaining specifications:
-    s.curve.mod$n.specifications <-
-      nrow(s.curve.mod$results)
-
-    ## Print message: report on identified duplicates:
-    message("Duplicate models dropped, ",
-            s.curve.mod$n.specifications.original,
-            " now ",
-            s.curve.mod$n.specifications,
-            " (less ",
-            s.curve.mod$n.specifications.original -
-            s.curve.mod$n.specifications,
-            ")")
-  }
+  # duplicates <-
+  #   which(
+  #     duplicated(
+  #       lapply(s.curve.mod$results$final.specification,
+  #              ## Moves around terms so that duplicates aren't missed due to
+  #              ## R-style formatting:
+  #              function(x){
+  #                str_split(x, ":") %>%
+  #                  lapply(sort) %>%
+  #                  vapply(function(x){paste0(x, collapse = ":")}, FUN.VALUE = "char") %>%
+  #                  sort
+  #              })
+  #     ))
+  #
+  # ## Set a duplicate flag:
+  # s.curve.mod$has.duplicates <- FALSE
+  #
+  # ## Make note of duplicates, if existing, and update:
+  # if(length(duplicates) > 0){
+  #
+  #   s.curve.mod$has.duplicates <- TRUE
+  #
+  #   ## Moves results of any duplicated models to separate location:
+  #   s.curve.mod$duplicated.models <-
+  #     s.curve.mod$results[duplicates,]
+  #
+  #   ## Moves duplicate specifications from specification list:
+  #   s.curve.mod$duplicate.specs <-
+  #     s.curve.mod$spec.list[duplicates,]
+  #
+  #   ## Drops duplicates from results:
+  #   s.curve.mod$results <-
+  #     s.curve.mod$results[-duplicates,]
+  #
+  #   ## Drops duplicates from specification list:
+  #   s.curve.mod$spec.list <-
+  #     s.curve.mod$spec.list[-duplicates,]
+  #
+  #   ## Records the total number of speficiations:
+  #   s.curve.mod$n.specifications.original <-
+  #     s.curve.mod$n.specifications
+  #
+  #   ## Updates the actual number of remaining specifications:
+  #   s.curve.mod$n.specifications <-
+  #     nrow(s.curve.mod$results)
+  #
+  #   ## Print message: report on identified duplicates:
+  #   message("Duplicate models dropped, ",
+  #           s.curve.mod$n.specifications.original,
+  #           " now ",
+  #           s.curve.mod$n.specifications,
+  #           " (less ",
+  #           s.curve.mod$n.specifications.original -
+  #           s.curve.mod$n.specifications,
+  #           ")")
+  # }
 
 
   ## (pemutation test-not used in Bryan, Yeager, O'Brien) ----
-  perm.dat <- NULL
 
-  if(is.numeric(permutations)){
+  if(!is.null(resample.type)){
 
     # Set the RNG seed:
-    if(!is.null(s.curve.mod$perm.seed)){
+    if(!is.null(s.curve.mod$rng.seed)){
       # use specified seed if available:
-      set.seed(s.curve.mod$perm.seed)
+      set.seed(s.curve.mod$rng.seed)
     } else {
       # Otherwise generate one and record it:
-      s.curve.mod$perm.seed <- sample(1:1000, 1)
-      set.seed(s.curve.mod$perm.seed)
+      s.curve.mod$rng.seed <- sample(1:1000, 1)
+      set.seed(s.curve.mod$rng.seed)
     }
 
-    ## Save a nested list of individual data frames
-    ## like the one we just made above:
-    perm.dat <- dat
-      replicate(
-        ## number of permutations
-        permutations,
-        {
-          ## shuffle all treatment vars
-          ## Same ordering for all variables in a particular
-          ## iteration
-          new.order <- sample(nrow(perm.dat))
-          perm.dat[treatment] <-
-            lapply(
-              treatment,
-              function(tvar){
-                perm.dat[[tvar]][new.order]
-              })
 
-          ## run model for that permutation:
-          curveRunner(s.curve.mod,
-                      inc.full.models = FALSE,
-                      inc.tidy.models = FALSE)
-        },
-        simplify=FALSE)
-  } #
+    replacement <-
+      ifelse(resample.type == "permutation", FALSE, TRUE)
 
+    resampling.map <-
+      setNames(
+        as.data.frame(
+          replicate(iterations, sample(nrow(dat), replace = replacement))
+        ),
+        paste0("itr.", seq_len(iterations))
+      )
+
+
+    s.curve.mod$resampling.map <- resampling.map
+
+    resample.dat <- dat
+
+    if(!parallel){
+
+      ## Save a nested list of individual data frames
+      ## like the one we just made above:
+      s.curve.mod$resample.test <-
+        lapply(
+          ## number of permutations
+          seq_len(s.curve.mod$iterations),
+          function(ind){
+            cat(ind);cat("\n")
+
+            new.order <- s.curve.mod$resampling.map[[ind]]
+            treatment <- s.curve.mod$treatment
+
+            ## shuffle all treatment vars
+            ## Same ordering for all variables in a particular
+            ## iteration
+            s.curve.mod$dat[treatment] <-
+              lapply(
+                treatment,
+                function(tvar){
+                  resample.dat[[tvar]][new.order]
+                })
+
+            ## run model for that permutation:
+            curveRunner(s.curve.mod,
+                        inc.full.models = FALSE,
+                        inc.tidy.models = FALSE)
+          })
+
+    } else {
+
+
+      # Set cores:
+      cores <- parallel::detectCores(logical=TRUE)
+
+      ## Save a nested list of individual data frames
+      ## like the one we just made above:
+      s.curve.mod$resample.test <- {
+
+        message("using a cluster of ", cores, " cores")
+
+        cl <- parallel::makeCluster(cores)
+        on.exit(parallel::stopCluster(cl))
+
+        parallel::clusterEvalQ(cl, require("lme4"))
+        parallel::clusterEvalQ(cl, require("lmerTest"))
+        parallel::clusterEvalQ(cl, require("dplyr"))
+        parallel::clusterEvalQ(cl, require("glmmTMB"))
+        parallel::clusterEvalQ(cl, require("broom"))
+        parallel::clusterEvalQ(cl, require("broom.mixed"))
+        parallel::clusterEvalQ(cl, require("sandwich"))
+        parallel::clusterEvalQ(cl, require("lmtest"))
+
+        parallel::clusterExport(cl, c("curveRunner"))
+        parallel::clusterExport(cl, c("s.curve.mod", "resample.dat"),
+                                envir = environment())
+
+        parallel::parLapplyLB(
+          cl = cl,
+          ## number of permutations
+          X =  seq_len(s.curve.mod$iterations),
+          ## Iterations to run:
+          function(ind){
+            ## shuffle all treatment vars
+            ## Same ordering for all variables in a particular
+            ## iteration
+
+            new.order <- s.curve.mod$resampling.map[[ind]]
+            treatment <- s.curve.mod$treatment
+
+            ## Replace data for individual run w/resampled data:
+            s.curve.mod$dat[treatment] <-
+              lapply(
+                treatment,
+                function(tvar){
+                  s.curve.mod$dat[[tvar]][new.order]
+                })
+
+            ## run model for that permutation:
+            curveRunner(s.curve.mod,
+                        inc.full.models = FALSE,
+                        inc.tidy.models = FALSE)
+          }
+        )
+      }
+    } #
+
+
+  }
   ## .(4b & 4c) Model results and output ----
 
   ## Calls s-curve update to provide final output:
   s.curve.update(
-    s.curve.mod = s.curve.mod,
-    perm.dat = perm.dat
+    s.curve.mod = s.curve.mod
   )
 
 }
-
-

@@ -98,7 +98,7 @@ curveRunner <-
                params <-
                  list(
                    ## The data:
-                   data = dat,
+                   data = quote(dat),
                    ## The formulas:
                    formula = spec.list[["formula"]][[ind]]
                  )
@@ -189,6 +189,10 @@ curveRunner <-
                  final.model <- c(final.model, weights.name)
                }
 
+               if(!is.null(offset)){
+                 params$offset <- as.name(s.curve.model$offset)
+               }
+
                ## Generalized model:
                if(spec.generalized){
                  params$family <- spec.family
@@ -206,8 +210,13 @@ curveRunner <-
                    myWarnings <<- c(myWarnings, list(w))
                    invokeRestart("muffleWarning")
                  }
-                 val <- withCallingHandlers(expr, warning = wHandler)
-                 list(value = val, warnings = myWarnings)
+                 myMessages <- NULL
+                 mHandler <- function(m) {
+                   myMessages <<- c(myMessages, list(m))
+                   invokeRestart("muffleMessage")
+                 }
+                 val <- withCallingHandlers(expr, warning = wHandler, message = mHandler)
+                 list(value = val, warnings = myWarnings, message = myMessages)
                }
 
 
@@ -382,6 +391,9 @@ curveRunner <-
                if(inc.full.models) {
                  results.row$full.models <- list(model.run)
                }
+
+               results.row$messages <-
+                 model.run.warningcapture["messages"]
 
                results.row$warnings <-
                  model.run.warningcapture["warnings"]

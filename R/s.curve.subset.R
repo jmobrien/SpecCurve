@@ -35,9 +35,9 @@ s.curve.subset <-
              s.curve.mod$results$specification.no)
 
   # Filters the permutation test equivalently:
-  if(!is.null(s.curve.mod$perm.test)){
-    s.curve.mod$perm.test <-
-      s.curve.mod$perm.test %>%
+  if(!is.null(s.curve.mod$resample.test)){
+    s.curve.mod$resample.test <-
+      s.curve.mod$resample.test %>%
       map(~.x %>%
             filter(specification.no %in%
                      s.curve.mod$results$specification.no)
