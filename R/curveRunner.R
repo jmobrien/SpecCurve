@@ -189,7 +189,7 @@ curveRunner <-
                  final.model <- c(final.model, weights.name)
                }
 
-               if(!is.null(offset)){
+               if(!is.null(s.curve.model$offset)){
                  params$offset <- as.name(s.curve.model$offset)
                }
 
