@@ -56,6 +56,7 @@ s.curve <- function(dat, outcomes, treatment,
                     extra.treatment = NULL,
                     mod.type = lm, mod.family = NULL,
                     offset = NULL,
+                    control = NULL,
                     alpha = .05, tail = NULL,
                     subsets = NULL, subsets.exclude = TRUE,
                     weights = NULL, weights.exclude = TRUE,
@@ -138,6 +139,7 @@ s.curve <- function(dat, outcomes, treatment,
       mod.type = model.type,
       mod.family = mod.family,
       offset = offset,
+      control = control,
       cluster = cluster,
       cluster.var = cluster.var,
       robust.se = robust.se,
@@ -720,9 +722,11 @@ s.curve <- function(dat, outcomes, treatment,
       set.seed(s.curve.mod$rng.seed)
     }
 
-
-    replacement <-
-      ifelse(resample.type == "permutation", FALSE, TRUE)
+    if(resample.type == "bootstrap") {
+      replacement <- TRUE
+    } else {
+      replacement <- FALSE
+    }
 
     resampling.map <-
       setNames(
@@ -732,101 +736,228 @@ s.curve <- function(dat, outcomes, treatment,
         paste0("itr.", seq_len(iterations))
       )
 
-
     s.curve.mod$resampling.map <- resampling.map
 
     resample.dat <- dat
 
-    if(!parallel){
+    if(resample.type == "bootstrap"){
+      null.dat <- dat
+      null.dat[treatment] <- 0
 
-      ## Save a nested list of individual data frames
-      ## like the one we just made above:
-      s.curve.mod$resample.test <-
-        lapply(
-          ## number of permutations
-          seq_len(s.curve.mod$iterations),
-          function(ind){
-            cat(ind);cat("\n")
+      # Go down each one of the models and calculate a null adjustment
+      null.ys <-
+        bind_cols(
+          lapply(
+            s.curve.mod$results$specification.no,
+            function(s.no){
+              # Get position index:
+              index <- which(s.curve.mod$results$specification.no == s.no)
+              # Create data.frame with null-adjusted y-variable:
+              y_null <- predict(s.curve.mod$results$full.models[[index]],
+                                newdat = null.dat, type = "response") +
+                resid(s.curve.mod$results$full.models[[index]], type = "response")
 
-            new.order <- s.curve.mod$resampling.map[[ind]]
-            treatment <- s.curve.mod$treatment
+              if(s.curve.mod$results$generalized[[index]]){
+                y_null <- ifelse(y_null <= 0, 0, round(y_null, 0))
+              }
 
-            ## shuffle all treatment vars
-            ## Same ordering for all variables in a particular
-            ## iteration
-            s.curve.mod$dat[treatment] <-
-              lapply(
-                treatment,
-                function(tvar){
-                  resample.dat[[tvar]][new.order]
-                })
+              return(
+                setNames(nm = paste0("null_y_", s.no),
+                         data.frame(y_null))
+              )
+            }
+          )
+        )
 
-            ## run model for that permutation:
-            curveRunner(s.curve.mod,
-                        inc.full.models = FALSE,
-                        inc.tidy.models = FALSE)
-          })
+      resample.dat <-
+        bind_cols(
+          resample.dat,
+          null.ys
+        )
+
+      # Update the specification list temporarily for the y-adjusted outcome variables:
+      s.curve.mod$spec.list$formula.orig <-
+        s.curve.mod$spec.list$formula
+
+      s.curve.mod$spec.list$formula <-
+        pmap(
+          select(s.curve.mod$spec.list,
+                 formula.orig,
+                 specification.index),
+          ~update.formula(old = .x, new = paste0("null_y_", .y, " ~ ."))
+        )
+
+      if(!parallel){
+
+        ## Save a nested list of individual data frames
+        ## like the one we just made above:
+        s.curve.mod$resample.test <-
+          lapply(
+            ## number of permutations
+            seq_len(s.curve.mod$iterations),
+            function(ind){
+              cat(ind);cat("\n")
+
+              # Get the set of resampled rows:
+              new.order <- s.curve.mod$resampling.map[[ind]]
+
+              ## Do a bootstrap draw from the data:
+              s.curve.mod$dat <-
+                resample.dat[new.order,]
+
+              ## run model for that permutation:
+              curveRunner(s.curve.mod,
+                          inc.full.models = FALSE,
+                          inc.tidy.models = FALSE)
+            })
+
+      } else {
+        # Parallel method:
+
+        # Set cores:
+        cores <- parallel::detectCores(logical=TRUE)
+
+        ## Save a nested list of individual data frames
+        ## like the one we just made above:
+        s.curve.mod$resample.test <- {
+
+          message("using a cluster of ", cores, " cores")
+
+          cl <- parallel::makeCluster(cores)
+          on.exit(parallel::stopCluster(cl))
+
+          parallel::clusterEvalQ(cl, require("lme4"))
+          parallel::clusterEvalQ(cl, require("lmerTest"))
+          parallel::clusterEvalQ(cl, require("dplyr"))
+          parallel::clusterEvalQ(cl, require("glmmTMB"))
+          parallel::clusterEvalQ(cl, require("broom"))
+          parallel::clusterEvalQ(cl, require("broom.mixed"))
+          parallel::clusterEvalQ(cl, require("sandwich"))
+          parallel::clusterEvalQ(cl, require("lmtest"))
+
+          parallel::clusterExport(cl, c("curveRunner"))
+          parallel::clusterExport(cl, c("s.curve.mod", "resample.dat"),
+                                  envir = environment())
+
+          parallel::parLapplyLB(
+            cl = cl,
+            ## number of permutations
+            X =  seq_len(s.curve.mod$iterations),
+            ## Iterations to run:
+            function(ind){
+              ## shuffle all treatment vars
+              ## Same ordering for all variables in a particular
+              ## iteration
+
+              new.order <- s.curve.mod$resampling.map[[ind]]
+
+              ## Do a bootstrap draw from the data:
+              s.curve.mod$dat <-
+                resample.dat[new.order,]
+
+              ## run model for that permutation:
+              curveRunner(s.curve.mod,
+                          inc.full.models = FALSE,
+                          inc.tidy.models = FALSE)
+            }
+          )
+        }
+      } # End parallel vs not
+
 
     } else {
 
+      # Permutation approach:
+      if(!parallel){
 
-      # Set cores:
-      cores <- parallel::detectCores(logical=TRUE)
+        ## Save a nested list of individual data frames
+        ## like the one we just made above:
+        s.curve.mod$resample.test <-
+          lapply(
+            ## number of permutations
+            seq_len(s.curve.mod$iterations),
+            function(ind){
+              cat(ind);cat("\n")
 
-      ## Save a nested list of individual data frames
-      ## like the one we just made above:
-      s.curve.mod$resample.test <- {
+              new.order <- s.curve.mod$resampling.map[[ind]]
+              treatment <- s.curve.mod$treatment
 
-        message("using a cluster of ", cores, " cores")
+              ## shuffle all treatment vars
+              ## Same ordering for all variables in a particular
+              ## iteration
+              s.curve.mod$dat[treatment] <-
+                lapply(
+                  treatment,
+                  function(tvar){
+                    resample.dat[[tvar]][new.order]
+                  })
 
-        cl <- parallel::makeCluster(cores)
-        on.exit(parallel::stopCluster(cl))
+              ## run model for that permutation:
+              curveRunner(s.curve.mod,
+                          inc.full.models = FALSE,
+                          inc.tidy.models = FALSE)
+            })
 
-        parallel::clusterEvalQ(cl, require("lme4"))
-        parallel::clusterEvalQ(cl, require("lmerTest"))
-        parallel::clusterEvalQ(cl, require("dplyr"))
-        parallel::clusterEvalQ(cl, require("glmmTMB"))
-        parallel::clusterEvalQ(cl, require("broom"))
-        parallel::clusterEvalQ(cl, require("broom.mixed"))
-        parallel::clusterEvalQ(cl, require("sandwich"))
-        parallel::clusterEvalQ(cl, require("lmtest"))
-
-        parallel::clusterExport(cl, c("curveRunner"))
-        parallel::clusterExport(cl, c("s.curve.mod", "resample.dat"),
-                                envir = environment())
-
-        parallel::parLapplyLB(
-          cl = cl,
-          ## number of permutations
-          X =  seq_len(s.curve.mod$iterations),
-          ## Iterations to run:
-          function(ind){
-            ## shuffle all treatment vars
-            ## Same ordering for all variables in a particular
-            ## iteration
-
-            new.order <- s.curve.mod$resampling.map[[ind]]
-            treatment <- s.curve.mod$treatment
-
-            ## Replace data for individual run w/resampled data:
-            s.curve.mod$dat[treatment] <-
-              lapply(
-                treatment,
-                function(tvar){
-                  s.curve.mod$dat[[tvar]][new.order]
-                })
-
-            ## run model for that permutation:
-            curveRunner(s.curve.mod,
-                        inc.full.models = FALSE,
-                        inc.tidy.models = FALSE)
-          }
-        )
-      }
-    } #
+      } else {
 
 
-  }
+        # Set cores:
+        cores <- parallel::detectCores(logical=TRUE)
+
+        ## Save a nested list of individual data frames
+        ## like the one we just made above:
+        s.curve.mod$resample.test <- {
+
+          message("using a cluster of ", cores, " cores")
+
+          cl <- parallel::makeCluster(cores)
+          on.exit(parallel::stopCluster(cl))
+
+          parallel::clusterEvalQ(cl, require("lme4"))
+          parallel::clusterEvalQ(cl, require("lmerTest"))
+          parallel::clusterEvalQ(cl, require("dplyr"))
+          parallel::clusterEvalQ(cl, require("glmmTMB"))
+          parallel::clusterEvalQ(cl, require("broom"))
+          parallel::clusterEvalQ(cl, require("broom.mixed"))
+          parallel::clusterEvalQ(cl, require("sandwich"))
+          parallel::clusterEvalQ(cl, require("lmtest"))
+
+          parallel::clusterExport(cl, c("curveRunner"))
+          parallel::clusterExport(cl, c("s.curve.mod", "resample.dat"),
+                                  envir = environment())
+
+          parallel::parLapplyLB(
+            cl = cl,
+            ## number of permutations
+            X =  seq_len(s.curve.mod$iterations),
+            ## Iterations to run:
+            function(ind){
+              ## shuffle all treatment vars
+              ## Same ordering for all variables in a particular
+              ## iteration
+
+              new.order <- s.curve.mod$resampling.map[[ind]]
+              treatment <- s.curve.mod$treatment
+
+              ## Replace data for individual run w/resampled data:
+              s.curve.mod$dat[treatment] <-
+                lapply(
+                  treatment,
+                  function(tvar){
+                    s.curve.mod$dat[[tvar]][new.order]
+                  })
+
+              ## run model for that permutation:
+              curveRunner(s.curve.mod,
+                          inc.full.models = FALSE,
+                          inc.tidy.models = FALSE)
+            }
+          )
+        }
+      } # End parallel vs not
+    } # End Permutations
+  } # End resampling
+
   ## .(4b & 4c) Model results and output ----
 
   ## Calls s-curve update to provide final output:
